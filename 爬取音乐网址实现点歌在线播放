@@ -1,0 +1,53 @@
+import requests
+from bs4 import BeautifulSoup
+from selenium import webdriver
+class OnLineMusic:
+    def __init__(self):
+        self.headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:66.0) Gecko/20100101 Firefox/66.0' }
+        self.music_name=''
+        self.end_url=''
+    def run(self):
+        self.search_music()
+        self.get_music()
+        self.Play()
+    def request(self,url):
+        html = requests.get(url,headers=self.headers)
+        html.encoding = ('utf-8')
+        soup = BeautifulSoup(html.text,'lxml')
+        return soup
+    def search_music(self):
+        try:
+            name = input('\n*************************************************************\n\n\t\t快输入要播放的歌曲名！！！\n\t')
+            url='http://www.ytmp3.cn/?search='+name
+            soup=self.request(url)
+            raw_data = soup.find_all(class_='ser_8')
+            if len(raw_data)==1:
+                print("没有找到相关的歌曲，重来！！！")
+                self.run()
+            print("********************你是不是要听这些歌！！********************")
+            for i in range(len(raw_data)):
+                print(i,'\t',raw_data[i].get_text())
+            option = int(input("*************************************************************\n\n\t\t赶紧挑一个序号告诉我！！！\n\t"))
+            print('\n')
+            self.music_name = raw_data[option].get_text()
+        except Exception as e:
+            print("出错啦！拜拜不送！\n")
+            exit()
+    def get_music(self):
+        url='http://www.ytmp3.cn/?search='+self.music_name
+        soup=self.request(url)
+        music_id = soup.select('.ser_8 a')[0]['href']
+        music_id = music_id[2:-5]
+        self.end_url = 'http://www.ytmp3.cn/down/'+music_id+'.mp3'
+    def Play(self):
+        print("\n********************等一下下，网有点卡********************\n\n要是弹出奇怪的网页，说明这首歌被吃了！！赶紧换一首吧！！\n\n********************等一下下，网有点卡********************\n")
+        #模拟浏览器打开播放
+        option=webdriver.ChromeOptions()
+        option.add_experimental_option('excludeSwitches', ['enable-automation'])
+        bowser = webdriver.Chrome(options=option)
+        bowser.get(self.end_url)
+        self.run()
+
+    #如需要下载，只需要请求self.end_url然后保存content即可
+music=OnLineMusic()
+music.run()
