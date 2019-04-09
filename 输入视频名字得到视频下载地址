@@ -1,0 +1,71 @@
+# Author:D.dw
+import requests,re
+from queue import Queue
+from bs4 import BeautifulSoup
+
+
+class DownMovies:
+
+    def __init__(self,names):
+        self.names=names
+        #headers不完整的话，post不到数据
+        self.headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:66.0) Gecko/20100101 Firefox/66.0',}
+        self.session=requests.session()
+
+    def search(self,names):
+        print('开始搜索电影')
+        for name in names:
+            search_url='http://www.yingshidaquan.com/index.php?s=vod-search'
+            post_data={
+                'wd':name,
+                'submit':'搜+索'
+            }
+
+            response=self.session.post(search_url,data=post_data,headers=self.headers)
+            response.encoding=('utf-8')
+            soup=BeautifulSoup(response.text,'lxml')
+            raw_data=soup.select('.searchmlist a')
+            if raw_data=='':
+                print('没有  %s  的相关资源'%name)
+                return
+            movie_id=raw_data[0]['href']
+            movie_url='http://www.yingshidaquan.com'+movie_id
+            response2=self.session.get(movie_url,headers=self.headers)
+            response2.encoding=('utf-8')
+            soup2=BeautifulSoup(response2.text,'lxml')
+            #这个是在响应代码中获得的真实标签
+            raw_data2=soup2.select('.ed2klist')
+            if raw_data2==[]:
+                print('%s  没有直接的MP4链接，需要手动获取，进入   %s   获取'%(name,movie_url))
+                continue
+            for addss in raw_data2:
+                # print(addss.get_text())
+                string=addss.get_text()
+                # 返回数据如下，然后用正则将http开头，.mp4结尾的数据都抓取下来，最后用断点式下载
+                # 匹配$开始，mp4之前有——》 .* 表示匹配0~多个非换行符，？表示当完成一次匹配就返回一个数据（不加问号会一直匹配到最后，找到最后一个mp4再返回），
+                # +表示前面这串匹配模式至少有一个，？表示前面结果成功匹配一次就返回，不加的话只返回最后一个
+                pat = re.compile('\$(.*?mp4)+?')
+                data=re.findall(pat, string)
+                if data==[]:
+                    print('%s  没有直接的MP4链接，需要手动获取，进入   %s   获取' %(name,movie_url))
+                elif data[0][0]=='e':
+                    print('%s  没有直接的MP4链接，需要手动获取，进入   %s   获取' % (name, movie_url))
+                else:
+                    print(name, '下载（播放）地址', data)
+
+
+    def run(self):
+        print(self.names)
+        self.search(self.names)
+        return
+
+names=[]
+while True:
+    name=input('请输入电影名字，不同电影回车间隔，回车结束\n')
+    names.append(name)
+    if name=='':
+        break
+
+names.pop(-1)#删除最后一个空白输入
+search=DownMovies(names)
+search.run()
