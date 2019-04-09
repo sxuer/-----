@@ -1,0 +1,140 @@
+import requests
+from bs4 import BeautifulSoup
+import threading
+from redis import Redis
+
+#这个网址的区别：ArticleId不一样
+
+
+class Spider:
+
+    def __init__(self, name):
+
+        self.headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/73.0.3683.86 Safari/537.36'}
+        self.name = name
+        # 连接redis
+        self.redi = Redis(host='127.0.0.1', port=6379, password='123456')
+
+        #只有生产者才需要获取数据，爬取网页
+        if self.name=='producer':
+            #初始页面
+            # self.start_urls = ['http://www.umei.cc/tags/xiaoyuanmeinv_2.htm', 'http://www.umei.cc/tags/xiaoyuanmeinv.htm']
+            self.start_urls = ['http://www.umei.cc/p/gaoqing/gangtai/']
+            self.item_url = set()  # 保存主题页
+            # 数据保存
+            self.img_url = []
+            self.next_img_url = []  # 实质上跟img_url是一样的，但是列表是可变元素，为了防止重复使用，换一个列表装载
+
+            # 防止多线程重复爬取，实例化的同时自动执行爬取
+            print("开始爬取网页，初始化数据")
+            self.get_first_url()
+            self.get_next_url()
+
+            print('网页爬取完毕，数据初始化完毕')
+
+            # 加入redis前的数据准备
+            self.data = list(set(self.img_url) ^ set(self.next_img_url))
+            del self.img_url
+            del self.next_img_url
+            self.save_src_to_redis()
+
+    def get_first_url(self):
+        for url in self.start_urls:
+            html = requests.get(url, headers=self.headers)
+            html.encoding = 'utf-8'
+            soup = BeautifulSoup(html.text, 'lxml')
+            raw = soup.select('.TypeList li > a')
+            for img_url in raw:
+                href = img_url['href']
+                self.img_url.append(href)
+                print(href)
+
+    def get_next_url(self):
+        for i in range(len(self.img_url)):
+            for j in range(15):  # 每个模特大概是十页,但有的没有，所以有的是无效网址
+                next = self.img_url[i][0:-4] + '_%i.htm' % (j + 1)
+                self.next_img_url.append(next)
+
+    # 思路：获得的url对称差集之后，存入redis，然后redis作为一个队列，多线程pop出来
+    def save_src_to_redis(self):
+        for i in range(len(self.data)):
+            self.redi.lpush('data', self.data[i])
+
+    def get_src(self):
+        for i in range(len(self.data)):
+            url = self.redi.rpop('data')
+            if url is not None:
+                url = url.decode('ascii')
+                html = requests.get(url, headers=self.headers)
+                html.encoding = 'utf-8'
+                if html.status_code == 200:
+                    soup = BeautifulSoup(html.text, 'lxml')
+                    try:
+                        src = soup.select('#ArticleId0 p > a >img')[0]['src']
+                        name = soup.select('.ArticleTitle')[0].get_text()
+                        self.redi.lpush('name', name)  # 保存src到redis
+                        self.redi.set(name, src)
+                        print(name, "加入redis")
+                    except Exception as e:
+                        print('***************get_src出错***************：', e)
+        print('URL获取结束')
+        print('程序结束')
+
+    # 获取的图片名字单独存在名为name的list中，保存在redis。方法是：从name列表中拿出名字，然后作为src的key
+    def download_img(self):
+        while self.redi.llen('name') > 0:  # 若name还有
+            try:
+                for i in range(self.redi.llen('name')):
+                    name = self.redi.rpop('name')   #pop一个redis少一个
+                    img_src = self.redi.get(name)
+                    self.redi.delete(name)   #由于redis_sting类型get只是取值，在这里手动删除
+                    img_src = img_src.decode('ascii')  # ASCII解码
+                    html = requests.get(img_src, headers=self.headers)
+                    # 保存名字
+                    save_name = name.decode('utf-8').replace('\n', '') + img_src[-4:]
+                    f = open('D:/meizi_img/' + save_name, 'wb')
+                    f.write(html.content)
+                    f.close()
+                    print('已获取图片：', save_name)
+
+            except Exception as e:
+                print('从redis中读取图片过程出问题', e)
+                break
+        print("redis已空")
+        exit()
+        return
+
+    # 创建多线程
+    def consumer(self):
+        print('————————开启下载线程————————')
+        need_join = []
+        for i in range(10):
+            download = threading.Thread(target=self.download_img)
+            download.start()
+            print('下载图片线程%d已开启' % (i + 1))
+            need_join.append(download)
+        for j in need_join:
+            j.join()
+
+    def producer(self):
+        print('————————开启生产图片url线程————————')
+        need_join = []
+        for i in range(5):
+            get_src = threading.Thread(target=self.get_src)
+            print('生产图片线程%d已开启' % (i + 1))
+            get_src.start()
+            need_join.append(get_src)
+        for j in need_join:
+            j.join()
+
+    def run(self):
+        if self.name == 'consumer':
+            self.consumer()
+        else:
+            self.producer()
+
+
+if __name__ == '__main__':
+    my_spider = Spider('producer')
+    my_spider.run()
